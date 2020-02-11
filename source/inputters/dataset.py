@@ -6,46 +6,56 @@ File: source/inputters/dataset.py
 """
 
 from torch.utils.data import DataLoader, Dataset
-import json
-from source.utils.misc import Pack
-from source.utils.misc import list2tensor
+import torch.nn.utils.rnn as rnn_utils
+import torch
 
 
 class Dataset(Dataset):
     """
     Dataset
+    @param data ```List[Dict]```
     """
-    def __init__(self, root_dir, vec_dir):  # __init__是初始化该类的一些基础参数
-        self.root_dir = root_dir  # 文件目录
-        self.vec_dir = vec_dir  # 处理后的文件
-        with open(vec_dir, encoding="utf-8") as load_f:
-            load_dict = json.load(load_f)
-            self.text_detail = load_dict
+    def __init__(self, data):
+        self.data = data
 
     def __len__(self):
-        return len(self.text_detail)
+        return len(self.data)
 
     def __getitem__(self, idx):
-        return self.text_detail[idx]
+        data = self.data[idx]
+        input_text = data['text']
+        input_mention = data['mention']
+        input_offset = data['offset']
+        target = data['target']
+
+        return input_text, input_mention, input_offset, target
 
     @staticmethod
-    def collate_fn(device=-1):
+    def collate_fn(batch):
         """
         collate_fn
         """
-        def collate(data_list):
-            """
-            collate
-            """
-            batch = Pack()
-            for key in data_list[0].keys():
-                batch[key] = list2tensor([x[key] for x in data_list])
-            if device >= 0:
-                batch = batch.cuda(device=device)
-            return batch
-        return collate
+        batch.sort(key=lambda x: len(x[0]), reverse=True)
 
-    def create_batches(self, batch_size=128, shuffle=True, device=-1):
+        input_text = []
+        input_mention = []
+        input_offset = []
+        target = []
+
+        for elem in batch:
+            input_text.append(torch.tensor(elem[0]))
+            input_mention.append(elem[1])
+            input_offset.append(elem[2])
+            target.append(elem[3])
+
+        input_text = rnn_utils.pad_sequence(input_text, batch_first=True)
+        input_mention = torch.tensor(input_mention)
+        input_offset = torch.tensor(input_offset)
+        target = torch.tensor(target)
+
+        return input_text, input_mention, input_offset, target
+
+    def create_batches(self, batch_size=128, shuffle=True):
         """
         create_batches
                 loader = DataLoader(dataset=self,
@@ -56,5 +66,5 @@ class Dataset(Dataset):
         """
         loader = DataLoader(dataset=self,
                             batch_size=batch_size,
-                            shuffle=shuffle)
+                            shuffle=shuffle, collate_fn=self.collate_fn)
         return loader
