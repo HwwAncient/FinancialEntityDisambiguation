@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 
-from pyhanlp import *
+from hanlp import *
 
 """
 File: source/inputters/voc.py
@@ -13,11 +13,7 @@ SOS_token = 1  # Start-of-sentence token
 EOS_token = 2  # End-of-sentence token
 UNK_token = 3  # unknown token
 
-def tokenizer(sentence):
-    words = []
-    for term in HanLP.segment(sentence):
-        words.append(term.word)
-    return words
+tokenizer = hanlp.load("PKU_NAME_MERGED_SIX_MONTHS_CONVSEG")
 
 class Voc:
     """
@@ -29,7 +25,7 @@ class Voc:
         self.trimmed = False
         self.word2index = {}
         self.word2count = {}
-        self.index2word = {PAD_token: "PAD", SOS_token: "SOS", EOS_token: "EOS", UNK_token: "UNK"}
+        self.index2word = {PAD_token: "PAD"}
         self.num_words = 4  # Count SOS, EOS, PAD, UNK
 
     def add_sentence(self, sentence):
@@ -64,24 +60,11 @@ class Voc:
         # Reinitialize dictionaries
         self.word2index = {}
         self.word2count = {}
-        self.index2word = {PAD_token: "PAD", SOS_token: "SOS", EOS_token: "EOS", UNK_token: "UNK"}
+        self.index2word = {PAD_token: "PAD"}
         self.num_words = 4  # Count default tokens
 
         for word in keep_words:
             self.add_word(word)
-
-    def save(self, file_path):
-        """
-        将数据保存到文件
-        @param file_path: 文件路径
-        @return:
-        """
-        print('Save vocabulary in {}'.format(file_path))
-        with open(file_path, 'w+', encoding='utf-8') as f:
-            for word, index in self.word2index.items():
-                f.writelines([str(index), '\t',
-                              str(word), '\t',
-                              str(self.word2count[word]), '\n'])
 
     def load(self, file_path):
         """
@@ -91,7 +74,9 @@ class Voc:
         """
         with open(file_path, 'r', encoding='utf-8') as f:
             for line in f:
-                attr = line.split('\t')
-                self.word2index[attr[1]] = attr[0]
-                self.word2count[attr[1]] = int(attr[2])
-                self.index2word[int(attr[0])] = attr[1]
+                attr = line.split()
+                index = int(attr[0])
+                word = attr[1]
+                self.word2index[word] = index
+                self.word2count[word] = 1
+                self.index2word[index] = word

@@ -10,7 +10,7 @@ import torch.nn.utils.rnn as rnn_utils
 import torch
 
 
-class Dataset(Dataset):
+class DefaultDataset(Dataset):
     """
     Dataset
     @param data ```List[Dict]```

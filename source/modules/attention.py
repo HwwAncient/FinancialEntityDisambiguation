@@ -85,8 +85,7 @@ class Attention(nn.Module):
             attn = torch.bmm(key, memory.transpose(1, 2))
         else:
             # (batch_size, query_length, memory_length, hidden_size)
-            hidden = self.linear_query(query).unsqueeze(
-                2) + self.linear_memory(memory).unsqueeze(1)
+            hidden = self.linear_query(query).unsqueeze(2) + self.linear_memory(memory).unsqueeze(1)
             key = self.tanh(hidden)
             # (batch_size, query_length, memory_length)
             attn = self.v(key).squeeze(-1)

@@ -111,6 +111,7 @@ def main():
     config.use_gpu = torch.cuda.is_available() and config.gpu >= 0
     device = config.gpu
     torch.cuda.set_device(device)
+
     # Data definition
     corpus = KnowledgeCorpus(data_dir=config.data_dir, data_prefix=config.data_prefix,
                              min_freq=0, max_vocab_size=config.max_vocab_size,
@@ -142,15 +143,18 @@ def main():
                              weight_control=config.weight_control,
                              concat=config.decode_concat)
     model_name = model.__class__.__name__
+
     # Generator definition
-    generator = TopKGenerator(model=model,
-                              src_field=corpus.SRC, tgt_field=corpus.TGT, cue_field=corpus.CUE,
-                              max_length=config.max_dec_len, ignore_unk=config.ignore_unk, 
-			      length_average=config.length_average, use_gpu=config.use_gpu)
+    generator = TopKGenerator(model=model, src_field=corpus.SRC, tgt_field=corpus.TGT,
+                              cue_field=corpus.CUE, max_length=config.max_dec_len,
+                              ignore_unk=config.ignore_unk, length_average=config.length_average,
+                              use_gpu=config.use_gpu)
+
     # Interactive generation testing
     if config.interact and config.ckpt:
         model.load(config.ckpt)
         return generator
+
     # Testing
     elif config.test and config.ckpt:
         print(model)

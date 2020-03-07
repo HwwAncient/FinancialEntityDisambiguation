@@ -8,12 +8,12 @@
 """
 File: source/inputters/corpus.py
 """
-
-
 import torch.nn as nn
+import torch
 
 from source.inputters.voc import *
-from source.inputters.dataset import *
+from source.inputters.dataset import DefaultDataset
+from source.utils.log import *
 
 WORD_VEC_DEPTH = 300
 
@@ -29,25 +29,34 @@ class Corpus(object):
     @param max_vocab_size 词汇库最大数量
     """
     def __init__(self,
+                 logger,
+                 dataset=DefaultDataset,
                  data_prefix='demo',
+                 source_prefix='source',
                  min_freq=0,
-                 data_dir="\\data",
+                 data_dir="./data",
                  max_vocab_size=None):
         self.data_dir = data_dir
         self.data_prefix = data_prefix
+        self.source_prefix = source_prefix
         self.min_freq = min_freq
         self.max_vocab_size = max_vocab_size
+        self.dataset = dataset
+        self.logger = logger
 
         # 数据存储路径
         prepared_data_file = data_prefix + ".data.pt"
-        prepared_vocab_file = data_prefix + ".vocab.pt"
         prepared_embeds_file = data_prefix + ".embeds.pt"
+        prepared_mention_file = data_prefix + ".mention.pt"
         self.prepared_data_file = os.path.join(data_dir, prepared_data_file)
-        self.prepared_vocab_file = os.path.join(data_dir, prepared_vocab_file)
         self.prepared_embeds_file = os.path.join(data_dir, prepared_embeds_file)
+        self.prepared_mention_file = os.path.join(data_dir, prepared_mention_file)
 
         # 词典
         self.vocab = Voc('vocab')
+
+        # 实体
+        self.mention2describe = {}
 
         # 词嵌入
         self.embeds = None
@@ -62,9 +71,15 @@ class Corpus(object):
         从文件直接读取已经处理好的数据
         """
         if not (os.path.exists(self.prepared_data_file) and
-                os.path.exists(self.prepared_vocab_file)):
+                os.path.exists(self.prepared_embeds_file) and
+                os.path.exists(self.prepared_mention_file)):
+            self.logger.info("Source file does not exist, start to build...")
             self.build()
-        self.vocab.load(self.prepared_vocab_file)
+
+        self.logger.info("Source file build finished, start to load...")
+        self.logger.info("Loading vocab data from '{}'".format(self.prepared_mention_file))
+        self.vocab.load(self.prepared_embeds_file)
+        self.load_mention(self.prepared_mention_file)
         self.load_data(self.prepared_data_file)
         self.load_embeds()
 
@@ -75,10 +90,9 @@ class Corpus(object):
         """
         data_raw = self.read_data(data_type="test")
         data_examples = self.build_data(data_raw)
-        self.data[data_type] = Dataset(data_examples)
+        self.data[data_type] = self.dataset(data_examples)
 
-        print("Number of examples:",
-              " ".join("{}-{}".format(k.upper(), len(v)) for k, v in self.data.items()))
+        self.logger.info("Number of examples: {}-{}".format(k.upper(), len(v)) for k, v in self.data.items())
 
     def load_data(self, prepared_data_file=None):
         """
@@ -86,12 +100,46 @@ class Corpus(object):
         @param prepared_data_file 数据来源
         """
         prepared_data_file = prepared_data_file or self.prepared_data_file
-        print("Loading prepared data from {} ...".format(prepared_data_file))
+        self.logger.info("Loading prepared data from {} ...".format(prepared_data_file))
 
         data = torch.load(prepared_data_file)
-        self.data = {'train': Dataset(data['train']), 'test': Dataset(data['test'])}
-        print("Number of examples:",
-              " ".join("{}-{}".format(k.upper(), len(v)) for k, v in self.data.items()))
+        self.data = {'train': self.dataset(data['train']), 'test': self.dataset(data['test'])}
+        self.logger.info("Number of examples: {}-{}".format(k.upper(), len(v)) for k, v in self.data.items())
+
+    def read_mention(self):
+
+        path = os.path.join(self.data_dir, 'source.mention')
+
+        mention_dict = {}
+        with open(path, 'r', encoding='utf-8') as f:
+            for line in f:
+                attrs = line.split('\t')
+                name = attrs[0]
+                describe = attrs[1]
+                mention_dict[name] = describe
+
+        return mention_dict
+
+    def build_mention(self, mention_dict):
+        for mention in mention_dict:
+            describe = mention_dict[mention]
+            text = tokenizer(describe)
+            out = []
+            for word in text:
+                if word in self.vocab.word2index:
+                    index = self.vocab.word2index[word]
+                    out.append(index)
+
+            if mention in self.vocab.word2index:
+                mention_id = self.vocab.word2index[mention]
+            else:
+                mention_id = 0
+            self.mention2describe[mention_id] = out
+
+    def load_mention(self, prepared_mention_file):
+        path = prepared_mention_file or self.prepared_mention_file
+        self.logger.info("Loading mention data from '{}'".format(path))
+        self.mention2describe = torch.load(path)
 
     def read_data(self, data_type='train', data_file=None):
         """
@@ -101,14 +149,14 @@ class Corpus(object):
                     'text': 句子,
                     'mention': 匹配实体,
                     'offset': 实体偏移,
-                    'target' :结果
+                    'target' :结果,
                     }
         """
         data_list = []
-        file_path = data_file or os.path.join(self.data_dir, self.data_prefix + '.' + data_type)
+        file_path = data_file or os.path.join(self.data_dir, self.source_prefix + '.' + data_type)
 
         # log
-        print("Reading data from '{}' ...".format(file_path))
+        self.logger.info("Reading data from '{}' ...".format(file_path))
 
         with open(file_path, 'r', encoding='utf-8') as f:
             for line in f:
@@ -124,51 +172,67 @@ class Corpus(object):
 
     def build_data(self, data):
         """
+        @param data: ``List[Dict]``
 
-        @param data_type:
-        @return:
+        @return:data: Dict{
+                    'text': 句子,
+                    'mention': 匹配实体,
+                    'offset': 实体偏移,
+                    'target' : 结果,
+                    'describe': 实体描述
+                    }
         """
         _data = []
+
         for dict in data:
             _dict = {}
-            words = tokenizer(dict['text'])
-            text = []
-            target_offset = dict['offset']
-            for word in words:
-                index = self.vocab.word2index[word]
-                text.append(index)
-            _dict['text'] = text
+
+            offset = int(dict['offset'])
+            mention_len = len(dict['mention'])
+
+            prefix = dict['text'][:offset]
+            suffix = dict['text'][offset + mention_len:]
+
+            prefix_list = tokenizer(prefix)
+            suffix_list = tokenizer(suffix)
+            mention = dict['mention']
+
+            prefix_index = []
+            suffix_index = []
+
+            mention_index = [self.vocab.word2index[mention]]
+
+            for word in prefix_list:
+                if word in self.vocab.word2index:
+                    index = self.vocab.word2index[word]
+                    prefix_index.append(index)
+
+            for word in suffix_list:
+                if word in self.vocab.word2index:
+                    index = self.vocab.word2index[word]
+                    suffix_index.append(index)
+
+            _dict['text'] = prefix_index + mention_index + suffix_index
             _dict['mention'] = self.vocab.word2index[dict['mention']]
-            _dict['offset'] = target_offset
+            _dict['offset'] = len(prefix_index)
             _dict['target'] = dict['target']
+            _dict['describe'] = self.mention2describe[_dict['mention']]
             _data.append(_dict)
+
         return _data
-
-    def build_vocab(self, data):
-        """
-        构建词汇表
-        @param data ``List[Dict]``
-        """
-        if self.vocab is None:
-            self.vocab = Voc('vocab')
-
-        for dict in data:
-            self.vocab.add_sentence(dict['text'])
-            self.vocab.add_word([dict['mention']])
 
     def load_embeds(self):
         """
         加载词嵌入
         @return:
         """
-        embeds_data = []
-        print("Loading word embeds from '{}'".format(self.prepared_embeds_file))
+        embeds_data = [[0.0 for _ in range(WORD_VEC_DEPTH)]]
+        self.logger.info("Loading word embeds from '{}'".format(self.prepared_embeds_file))
         with open(self.prepared_embeds_file, 'r', encoding='utf-8') as f:
             for line in f:
                 attr = line.split()
-                attr_ = [float(i) for i in attr]
-                embeds_data.append(attr_[1:])
-
+                attr_ = [float(i) for i in attr[2:]]
+                embeds_data.append(attr_)
         self.embeds = nn.Embedding(len(embeds_data), WORD_VEC_DEPTH)
         embeds = torch.tensor(embeds_data)
         self.embeds.weight.data.copy_(embeds)
@@ -177,36 +241,45 @@ class Corpus(object):
         """
         build
         """
-        print("Start to build corpus!")
+        self.logger.info("Start to build corpus!")
 
-        print("Reading data ...")
+        self.logger.info("Loading vocabulary ...")
+        self.vocab.load(self.prepared_embeds_file)
+
+        self.logger.info("Reading mention data ...")
+        mention = self.read_mention()
+        self.logger.info("Building mention data ...")
+        self.build_mention(mention)
+
+        self.logger.info("Reading TRAIN data ...")
         train_raw = self.read_data(data_type="train")
+        self.logger.info("Reading TEST data ...")
         test_raw = self.read_data(data_type="test")
 
-        print("Building vocabulary ...")
-        self.build_vocab(train_raw)
-        self.build_vocab(test_raw)
-
-        print("Building TRAIN data ...")
+        self.logger.info("Building TRAIN data ...")
         train_data = self.build_data(train_raw)
-        print("Building TEST data ...")
+        self.logger.info("Building TEST data ...")
         test_data = self.build_data(test_raw)
 
-        print("Loading word embedding ...")
+        self.logger.info("Loading word embedding ...")
         self.load_embeds()
 
-        self.data = {"train": Dataset(train_data),
-                     "test": Dataset(test_data)}
+        data = {"train": train_data,
+                "test": test_data}
 
-        print("Saving prepared vocab ...")
-        self.vocab.save(self.prepared_vocab_file)
-        print("Saved prepared vocab to '{}'".format(self.prepared_vocab_file))
-        print("Saving prepared data ...")
-        torch.save(self.data, self.prepared_data_file)
-        print("Saved prepared data to '{}'".format(self.prepared_data_file))
+        self.data = {"train": self.dataset(train_data),
+                     "test": self.dataset(test_data)}
+
+        self.logger.info("Saving prepared data ...")
+        torch.save(data, self.prepared_data_file)
+        self.logger.info("Saved prepared data to '{}'".format(self.prepared_data_file))
+        self.logger.info("Save prepared mention data ...")
+        torch.save(self.mention2describe, self.prepared_mention_file)
+        self.logger.info("Saved prepared mention data to '{}".format(self.prepared_mention_file))
+
 
     def create_batches(self, batch_size, data_type="train",
-                       shuffle=False, device=None):
+                       shuffle=True):
         """
         create_batches
         返回对应数据的 DataLoader
@@ -226,7 +299,7 @@ class Corpus(object):
         """
         raw_data = self.read_data(data_type=data_type)
         examples = self.build_data(raw_data)
-        data = Dataset(examples)
+        data = self.dataset(examples)
         data_loader = data.create_batches(batch_size, shuffle)
         return data_loader
 
