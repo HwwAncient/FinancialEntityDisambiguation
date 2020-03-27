@@ -13,7 +13,7 @@ def getLogger(filename, show_level=logging.INFO):
 
     # 创建日志：
     # 文件日志
-    file_handler = logging.FileHandler(filename=filename, mode='w', encoding='utf-8')
+    file_handler = logging.FileHandler(filename=filename, mode='a', encoding='utf-8')
     file_handler.setFormatter(formatter)
 
     # 终端日志

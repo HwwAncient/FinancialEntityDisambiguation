@@ -16,7 +16,9 @@ def attention(query, key, value, mask=None, dropout=None):
     scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
     if mask is not None:
         scores = scores.masked_fill(mask == 0, -1e9)
-    p_attn = F.softmax(scores, dim = -1)
+    scores[scores == 0] = float('-inf')
+    p_attn = F.softmax(scores, dim=-1)
+    # p_attn[p_attn != p_attn] = 0
     if dropout is not None:
         p_attn = dropout(p_attn)
     return torch.matmul(p_attn, value), p_attn
@@ -42,7 +44,7 @@ class MultiHeadedAttention(nn.Module):
         nbatches = query.size(0)
 
         # 1) Do all the linear projections in batch from d_model => h x d_k
-        query, key, value = [l(x).view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
+        query, key, value = [x.view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
                              for l, x in zip(self.linears, (query, key, value))]
 
         # 2) Apply attention on all the projected vectors in batch.
@@ -51,4 +53,4 @@ class MultiHeadedAttention(nn.Module):
 
         # 3) "Concat" using a view and apply a final linear.
         x = x.transpose(1, 2).contiguous().view(nbatches, -1, self.h * self.d_k)
-        return self.linears[-1](x)
+        return x

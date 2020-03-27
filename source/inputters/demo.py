@@ -1,7 +1,7 @@
 import os
 import logging
 
-#  os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 # from tensorflow.compat.v1 import ConfigProto
 # from tensorflow.compat.v1 import InteractiveSession
 # config = ConfigProto()
@@ -23,7 +23,7 @@ logger = getLogger('../../output/info.log')
 corpus = Corpus(data_dir='../../data', logger=logger)
 
 # 2. 然后载入数据
-corpus.load()
+corpus.build()
 
 # 如果需要自己载入数据的调用
 # corpus.build()

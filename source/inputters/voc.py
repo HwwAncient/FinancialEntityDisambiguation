@@ -9,11 +9,16 @@ File: source/inputters/voc.py
 
 # Default word tokens
 PAD_token = 0  # Used for padding short sentences
-SOS_token = 1  # Start-of-sentence token
-EOS_token = 2  # End-of-sentence token
-UNK_token = 3  # unknown token
+# SOS_token = 1  # Start-of-sentence token
+# EOS_token = 2  # End-of-sentence token
+# UNK_token = 3  # unknown token
+#
+# tokenizer = None
+#
+# def getTokenizer(tokenizer):
 
 tokenizer = hanlp.load("PKU_NAME_MERGED_SIX_MONTHS_CONVSEG")
+
 
 class Voc:
     """
@@ -27,6 +32,7 @@ class Voc:
         self.word2count = {}
         self.index2word = {PAD_token: "PAD"}
         self.num_words = 4  # Count SOS, EOS, PAD, UNK
+
 
     def add_sentence(self, sentence):
         self.add_word(tokenizer(sentence))

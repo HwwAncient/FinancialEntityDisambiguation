@@ -1,11 +1,14 @@
 import torch.nn as nn
 import torch
 import copy
+import math
 
 from source.modules.LayerNorm import *
 
 
-
+def clones(module, N):
+    "Produce N identical layers."
+    return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
 
 
 class TransformerEncoder(nn.Module):
@@ -24,13 +27,13 @@ class TransformerEncoder(nn.Module):
         return self.norm(x)
 
 
-class SublayerConnection(nn.Module):
+class Sublayer(nn.Module):
     """
     A residual connection followed by a layer norm.
     Note for code simplicity the norm is first as opposed to last.
     """
     def __init__(self, size, dropout):
-        super(SublayerConnection, self).__init__()
+        super(Sublayer, self).__init__()
         self.norm = LayerNorm(size)
         self.dropout = nn.Dropout(dropout)
 
@@ -45,10 +48,33 @@ class EncoderLayer(nn.Module):
         super(EncoderLayer, self).__init__()
         self.self_attn = self_attn
         self.feed_forward = feed_forward
-        self.sublayer = clones(SublayerConnection(size, dropout), 2)
+        self.sublayer = clones(Sublayer(size, dropout), 2)
         self.size = size
 
     def forward(self, x, mask):
         "Follow Figure 1 (left) for connections."
         x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, mask))
         return self.sublayer[1](x, self.feed_forward)
+
+
+class PositionalEncoding(nn.Module):
+    "Implement the PE function."
+
+    def __init__(self, d_model, dropout, max_len=300):
+        super(PositionalEncoding, self).__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        # Compute the positional encodings once in log space.
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) *
+                             -(math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        x = x + nn.Parameter(self.pe[:, :x.size(1)], requires_grad=False)
+        # x = x + Variable(self.pe[:, :x.size(1)], requires_grad=False)
+        return self.dropout(x)

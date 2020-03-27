@@ -56,7 +56,8 @@ class Corpus(object):
         self.vocab = Voc('vocab')
 
         # 实体
-        self.mention2describe = {}
+        self.mention2id = {}
+        self.id2describe = {}
 
         # 词嵌入
         self.embeds = None
@@ -66,20 +67,19 @@ class Corpus(object):
         self.sort_fn = None
         self.data = None
 
-    def load(self):
+    def load(self, prepared_data_file=None):
         """
         从文件直接读取已经处理好的数据
         """
-        if not (os.path.exists(self.prepared_data_file) and
-                os.path.exists(self.prepared_embeds_file) and
-                os.path.exists(self.prepared_mention_file)):
+        prepared_data_file = prepared_data_file or self.prepared_data_file
+        if not (os.path.exists(prepared_data_file) and
+                os.path.exists(self.prepared_embeds_file)):
             self.logger.info("Source file does not exist, start to build...")
             self.build()
 
         self.logger.info("Source file build finished, start to load...")
         self.logger.info("Loading vocab data from '{}'".format(self.prepared_mention_file))
         self.vocab.load(self.prepared_embeds_file)
-        self.load_mention(self.prepared_mention_file)
         self.load_data(self.prepared_data_file)
         self.load_embeds()
 
@@ -103,8 +103,11 @@ class Corpus(object):
         self.logger.info("Loading prepared data from {} ...".format(prepared_data_file))
 
         data = torch.load(prepared_data_file)
-        self.data = {'train': self.dataset(data['train']), 'test': self.dataset(data['test'])}
-        self.logger.info("Number of examples: {}-{}".format(k.upper(), len(v)) for k, v in self.data.items())
+        self.data = {'train': self.dataset(data['train']),
+                     'train.large': self.dataset(data['train.large']),
+                     'test.large': self.dataset(data['test.large']),
+                     'test': self.dataset(data['test'])}
+        self.logger.info("Number of examples:" + "".join([" {}-{} ".format(k.upper(), len(v)) for k, v in self.data.items()]))
 
     def read_mention(self):
 
@@ -114,32 +117,50 @@ class Corpus(object):
         with open(path, 'r', encoding='utf-8') as f:
             for line in f:
                 attrs = line.split('\t')
-                name = attrs[0]
-                describe = attrs[1]
-                mention_dict[name] = describe
+                id = attrs[0]
+                name = attrs[1]
+                full_name = attrs[2]
+                index = attrs[3]
+                describe = attrs[4]
+
+                company = {}
+                company['id'] = id
+                company['full_name'] = full_name
+                company['index'] = index
+                company['describe'] = describe
+
+                if name not in mention_dict:
+                    mention_dict[name] = [company]
+                else:
+                    mention_dict[name].append(company)
 
         return mention_dict
 
     def build_mention(self, mention_dict):
         for mention in mention_dict:
-            describe = mention_dict[mention]
-            text = tokenizer(describe)
-            out = []
-            for word in text:
-                if word in self.vocab.word2index:
-                    index = self.vocab.word2index[word]
-                    out.append(index)
+            companys = mention_dict[mention]
+            indexs = []
+            for company in companys:
+                describe = company['describe']
+                text = tokenizer(describe)
+                out = []
+                for word in text:
+                    if word in self.vocab.word2index:
+                        index = self.vocab.word2index[word]
+                        out.append(index)
 
-            if mention in self.vocab.word2index:
-                mention_id = self.vocab.word2index[mention]
-            else:
-                mention_id = 0
-            self.mention2describe[mention_id] = out
+                indexs.append(company['id'])
+                self.id2describe[company['id']] = out
 
-    def load_mention(self, prepared_mention_file):
-        path = prepared_mention_file or self.prepared_mention_file
-        self.logger.info("Loading mention data from '{}'".format(path))
-        self.mention2describe = torch.load(path)
+            self.mention2id[mention] = indexs
+
+    def load_mention(self, prepared_mention_file=None):
+        prepared_data_file = prepared_mention_file or self.prepared_mention_file
+        self.logger.info("Loading prepared data from {} ...".format(prepared_data_file))
+
+        data = torch.load(prepared_data_file)
+        self.mention2id = data['mention2id']
+        self.id2describe = data['id2describe']
 
     def read_data(self, data_type='train', data_file=None):
         """
@@ -165,7 +186,8 @@ class Corpus(object):
                     'text': datas[0],
                     'mention': datas[1],
                     'offset': int(datas[2]),
-                    'target': int(datas[3])
+                    'target': int(datas[3]),
+                    'company_id': int(datas[4])
                 }
                 data_list.append(data)
         return data_list
@@ -185,8 +207,6 @@ class Corpus(object):
         _data = []
 
         for dict in data:
-            _dict = {}
-
             offset = int(dict['offset'])
             mention_len = len(dict['mention'])
 
@@ -211,13 +231,16 @@ class Corpus(object):
                 if word in self.vocab.word2index:
                     index = self.vocab.word2index[word]
                     suffix_index.append(index)
+            company_list = self.mention2id[dict['mention']]
 
-            _dict['text'] = prefix_index + mention_index + suffix_index
-            _dict['mention'] = self.vocab.word2index[dict['mention']]
-            _dict['offset'] = len(prefix_index)
-            _dict['target'] = dict['target']
-            _dict['describe'] = self.mention2describe[_dict['mention']]
-            _data.append(_dict)
+            for company_id in company_list:
+                _dict = {}
+                _dict['text'] = prefix_index + mention_index + suffix_index
+                _dict['mention'] = self.vocab.word2index[dict['mention']]
+                _dict['offset'] = len(prefix_index)
+                _dict['describe'] = self.id2describe[company_id]
+                _dict['target'] = dict['target'] if str(company_id) == str(dict['company_id']) else 0
+                _data.append(_dict)
 
         return _data
 
@@ -253,29 +276,43 @@ class Corpus(object):
 
         self.logger.info("Reading TRAIN data ...")
         train_raw = self.read_data(data_type="train")
+        train_large_raw = self.read_data(data_type="train.more.large")
+
+
         self.logger.info("Reading TEST data ...")
+        test_large_raw = self.read_data(data_type="test.more.large")
         test_raw = self.read_data(data_type="test")
 
         self.logger.info("Building TRAIN data ...")
         train_data = self.build_data(train_raw)
+        train_large_data = self.build_data(train_large_raw)
+
         self.logger.info("Building TEST data ...")
+        test_large_data = self.build_data(test_large_raw )
         test_data = self.build_data(test_raw)
 
         self.logger.info("Loading word embedding ...")
         self.load_embeds()
 
         data = {"train": train_data,
+                "train.large": train_large_data,
+                "test.large": test_large_data,
                 "test": test_data}
 
         self.data = {"train": self.dataset(train_data),
+                     "train.large": self.dataset(train_large_data),
+                     "test.large": self.dataset(test_large_data),
                      "test": self.dataset(test_data)}
+
+        mention = {"mention2id": self.mention2id,
+                   "id2describe": self.id2describe}
 
         self.logger.info("Saving prepared data ...")
         torch.save(data, self.prepared_data_file)
         self.logger.info("Saved prepared data to '{}'".format(self.prepared_data_file))
-        self.logger.info("Save prepared mention data ...")
-        torch.save(self.mention2describe, self.prepared_mention_file)
-        self.logger.info("Saved prepared mention data to '{}".format(self.prepared_mention_file))
+        self.logger.info("Saving prepared mention ...")
+        torch.save(mention, self.prepared_mention_file)
+        self.logger.info("Saved prepared mention to '{}'".format(self.prepared_mention_file))
 
 
     def create_batches(self, batch_size, data_type="train",
@@ -303,8 +340,8 @@ class Corpus(object):
         data_loader = data.create_batches(batch_size, shuffle)
         return data_loader
 
-
-
+    def data_size(self, data_type="train"):
+        return len(self.data[data_type])
 
 
 # class SrcTgtCorpus(Corpus):
